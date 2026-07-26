@@ -78,14 +78,29 @@ async def api_request(method: str, endpoint: str, data: Optional[Dict] = None) -
     connector = aiohttp.TCPConnector(ssl=False)
     async with aiohttp.ClientSession(connector=connector) as session:
         panel_url = getattr(config, 'PANEL_URL', 'http://89.125.188.43:2053').rstrip('/')
-        api_token = getattr(config, 'API_TOKEN', '')
+        username = getattr(config, 'xui_username', '') or "admin"
+        password = getattr(config, 'xui_password', '') or ""
         
+        # 1. Авторизуемся в панели для получения сессии
+        login_url = f"{panel_url}/login"
+        login_data = {"username": username, "password": password}
+        
+        try:
+            async with session.post(login_url, json=login_data) as resp:
+                login_res = await resp.json()
+                if not login_res.get("success"):
+                    logger.error(f"3X-UI Login failed: {login_res.get('msg')}")
+                    return {"success": False, "msg": "Auth Failed"}
+        except Exception as e:
+            logger.error(f"3X-UI Login Exception: {e}")
+            return {"success": False, "msg": "Network Error on Login"}
+
+        # 2. Выполняем основной запрос с уже установленными куками сессии
         url = f"{panel_url}{endpoint}"
         headers = {
             "User-Agent": "Mozilla/5.0",
             "Content-Type": "application/json",
-            "Accept": "application/json",
-            "Authorization": f"Bearer {api_token}"
+            "Accept": "application/json"
         }
         try:
             if method == "GET":
@@ -98,6 +113,7 @@ async def api_request(method: str, endpoint: str, data: Optional[Dict] = None) -
                         return await resp.json()
         except Exception as e:
             logger.error(f"Panel API Exception [{method} {endpoint}]: {e}")
+            
         return {"success": False, "msg": "Network or Parse Error"}
 
 
