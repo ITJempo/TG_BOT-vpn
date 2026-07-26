@@ -81,7 +81,7 @@ async def api_request(method: str, endpoint: str, data: Optional[Dict] = None) -
         username = getattr(config, 'xui_username', '') or "admin"
         password = getattr(config, 'xui_password', '') or ""
         
-        # 1. Авторизуемся в панели для получения сессии
+        # 1. Авторизация в панели для получения сессионных кук
         login_url = f"{panel_url}/login"
         login_data = {"username": username, "password": password}
         
@@ -89,16 +89,14 @@ async def api_request(method: str, endpoint: str, data: Optional[Dict] = None) -
             async with session.post(login_url, json=login_data) as resp:
                 login_res = await resp.json()
                 if not login_res.get("success"):
+                    print(f"ОШИБКА ВХОДА В ПАНЕЛЬ: {login_res}")
                     logger.error(f"3X-UI Login failed: {login_res.get('msg')}")
                     return {"success": False, "msg": "Auth Failed"}
         except Exception as e:
             logger.error(f"3X-UI Login Exception: {e}")
             return {"success": False, "msg": "Network Error on Login"}
-        if not login_res.get("success"):
-                    print(f"ОШИБКА ВХОДА В ПАНЕЛЬ: {login_res}") # <--- Добавь эту строчку
-                    logger.error(f"3X-UI Login failed: {login_res.get('msg')}")
-                    return {"success": False, "msg": "Auth Failed"}
-        # 2. Выполняем основной запрос с уже установленными куками сессии
+
+        # 2. Выполнение основного запроса с активной сессией
         url = f"{panel_url}{endpoint}"
         headers = {
             "User-Agent": "Mozilla/5.0",
