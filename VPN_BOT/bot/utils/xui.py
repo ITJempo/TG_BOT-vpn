@@ -94,7 +94,10 @@ async def api_request(method: str, endpoint: str, data: Optional[Dict] = None) -
         except Exception as e:
             logger.error(f"3X-UI Login Exception: {e}")
             return {"success": False, "msg": "Network Error on Login"}
-
+        if not login_res.get("success"):
+                    print(f"ОШИБКА ВХОДА В ПАНЕЛЬ: {login_res}") # <--- Добавь эту строчку
+                    logger.error(f"3X-UI Login failed: {login_res.get('msg')}")
+                    return {"success": False, "msg": "Auth Failed"}
         # 2. Выполняем основной запрос с уже установленными куками сессии
         url = f"{panel_url}{endpoint}"
         headers = {
