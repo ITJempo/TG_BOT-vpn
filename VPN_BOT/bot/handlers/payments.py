@@ -3,7 +3,7 @@ import uuid
 from aiogram import Router, F, types
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import FSInputFile, InputMediaPhoto
+from aiogram.types import FSInputFile, InputMediaPhoto, WebAppInfo
 from aiocryptopay import AioCryptoPay, Networks
 
 from bot.config import PRICING_PLANS, config, BASE_DEVICES, EXTRA_DEVICE_STARS, PROMO_CODES
@@ -19,9 +19,7 @@ from bot.services.vpn_panel import VPNPanelService
 from bot.utils.xui import add_extra_device
 from bot.database.db import db
 
-# Инициализация Crypto Pay. 
-# ВАЖНО: Если у тебя токен от @CryptoTestnetBot, используй Networks.TEST_NET.
-# Если у тебя боевой токен от @CryptoBot, смени на Networks.MAIN_NET.
+# Инициализация Crypto Pay с использованием токена из Pydantic-конфига
 crypto = AioCryptoPay(token=config.CRYPTO_PAY_TOKEN, network=Networks.TEST_NET)
 
 router = Router()
@@ -202,7 +200,7 @@ async def process_payment_method(callback: types.CallbackQuery, callback_data: P
         await callback.answer()
         return
 
-    # 2. Оплата криптовалютой (USDT через CryptoBot) с поддержкой банковских карт
+    # 2. Оплата криптовалютой (USDT через CryptoBot) через Mini App
     if callback_data.method == "crypto":
         price_usdt = round(total_stars * 0.02, 2)  # Примерный курс: 1 звезда ≈ 0.02 USDT
         payload = f"vpn|{callback_data.mode}|{callback_data.plan_key}|{callback_data.count}|{promo_code}|crypto"
@@ -216,9 +214,9 @@ async def process_payment_method(callback: types.CallbackQuery, callback_data: P
                 expires_in=1800
             )
 
-            # Исправлено: используется актуальное поле bot_invoice_url вместо pay_url
+            # Используем WebApp вместо обычной внешней ссылки, чтобы избежать системной блокировки Telegram
             keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
-                [types.InlineKeyboardButton(text="💳 Оплатить картой / USDT", url=invoice.bot_invoice_url)],
+                [types.InlineKeyboardButton(text="💳 Оплатить картой / USDT", web_app=WebAppInfo(url=invoice.mini_app_invoice_url))],
                 [types.InlineKeyboardButton(text="🔄 Проверить оплату", callback_data=f"check_crypto_{invoice.invoice_id}")]
             ])
 
