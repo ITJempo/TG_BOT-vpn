@@ -19,8 +19,10 @@ from bot.services.vpn_panel import VPNPanelService
 from bot.utils.xui import add_extra_device
 from bot.database.db import db
 
-# Инициализация Crypto Pay с использованием токена из Pydantic-конфига
-crypto = AioCryptoPay(token=config.CRYPTO_PAY_TOKEN, network=Networks.MAIN_NET)
+# Инициализация Crypto Pay. 
+# ВАЖНО: Если у тебя токен от @CryptoTestnetBot, используй Networks.TEST_NET.
+# Если у тебя боевой токен от @CryptoBot, смени на Networks.MAIN_NET.
+crypto = AioCryptoPay(token=config.CRYPTO_PAY_TOKEN, network=Networks.TEST_NET)
 
 router = Router()
 
@@ -32,7 +34,7 @@ BANNER_START = "bot/assets/start_banner.png"
 # ──────────────────────────────────────────────────────────────
 # Хранилища в памяти процесса
 # ──────────────────────────────────────────────────────────────
-USER_PROMO: dict[int, str] = {}           # user_id -> применённый промокод
+USER_PROMO: dict[int, str] = {}          # user_id -> применённый промокод
 GIFT_CODES: dict[str, dict] = {}         # gift_code -> {"days": int, "count": int}
 USED_FREE_PROMOS: dict[int, set] = {}    # user_id -> set(кодов free_days)
 
@@ -214,8 +216,9 @@ async def process_payment_method(callback: types.CallbackQuery, callback_data: P
                 expires_in=1800
             )
 
+            # Исправлено: используется актуальное поле bot_invoice_url вместо pay_url
             keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
-                [types.InlineKeyboardButton(text="💳 Оплатить картой / USDT", url=invoice.pay_url)],
+                [types.InlineKeyboardButton(text="💳 Оплатить картой / USDT", url=invoice.bot_invoice_url)],
                 [types.InlineKeyboardButton(text="🔄 Проверить оплату", callback_data=f"check_crypto_{invoice.invoice_id}")]
             ])
 
