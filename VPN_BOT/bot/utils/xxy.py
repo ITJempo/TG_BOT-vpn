@@ -34,7 +34,19 @@ async def get_clients_by_tg_id(user_id: int) -> List[Dict[str, Any]]:
     settings = json.loads(settings_raw) if isinstance(settings_raw, str) else settings_raw
     clients = settings.get("clients", [])
 
-    return [c for c in clients if c.get("tgId") == user_id]
+    user_clients = []
+    for c in clients:
+        # Проверяем по tgId (число или строка) или по префиксу в email (tg_1574885030_...)
+        client_tg_id = c.get("tgId")
+        email = c.get("email", "")
+        
+        is_matched_tg = client_tg_id is not None and str(client_tg_id) == str(user_id)
+        is_matched_email = email.startswith(f"tg_{user_id}_") or email == f"tg_{user_id}"
+        
+        if is_matched_tg or is_matched_email:
+            user_clients.append(c)
+
+    return user_clients
 
 
 async def get_vless_link_by_uuid(client_uuid: str) -> Optional[str]:

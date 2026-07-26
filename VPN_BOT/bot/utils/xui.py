@@ -78,30 +78,14 @@ async def api_request(method: str, endpoint: str, data: Optional[Dict] = None) -
     connector = aiohttp.TCPConnector(ssl=False)
     async with aiohttp.ClientSession(connector=connector) as session:
         panel_url = getattr(config, 'PANEL_URL', 'http://89.125.188.43:2053').rstrip('/')
-        username = getattr(config, 'xui_username', '') or "admin"
-        password = getattr(config, 'xui_password', '') or ""
+        api_token = getattr(config, 'API_TOKEN', '')
         
-        # 1. Авторизация в панели для получения сессионных кук
-        login_url = f"{panel_url}/login"
-        login_data = {"username": username, "password": password}
-        
-        try:
-            async with session.post(login_url, json=login_data) as resp:
-                login_res = await resp.json()
-                if not login_res.get("success"):
-                    print(f"ОШИБКА ВХОДА В ПАНЕЛЬ: {login_res}")
-                    logger.error(f"3X-UI Login failed: {login_res.get('msg')}")
-                    return {"success": False, "msg": "Auth Failed"}
-        except Exception as e:
-            logger.error(f"3X-UI Login Exception: {e}")
-            return {"success": False, "msg": "Network Error on Login"}
-
-        # 2. Выполнение основного запроса с активной сессией
         url = f"{panel_url}{endpoint}"
         headers = {
             "User-Agent": "Mozilla/5.0",
             "Content-Type": "application/json",
-            "Accept": "application/json"
+            "Accept": "application/json",
+            "Authorization": f"Bearer {api_token}"
         }
         try:
             if method == "GET":
@@ -175,7 +159,7 @@ async def generate_vpn_key(user_id: int, username: str, days: int = 30) -> str:
     if "clients" not in settings:
         settings["clients"] = []
 
-    existing_client = next((c for c in settings["clients"] if c.get("tgId") == user_id), None)
+    existing_client = next((c for c in settings["clients"] if c.get("tgId") == user_id or str(c.get("email","")).startswith(f"tg_{user_id}")), None)
     
     if existing_client:
         client_uuid = existing_client["id"]
@@ -211,12 +195,14 @@ async def generate_vpn_key(user_id: int, username: str, days: int = 30) -> str:
         }
         settings["clients"].append(new_client)
 
+    # 3X-UI требует, чтобы settings, streamSettings и sniffing были переданы как JSON-строки
     inbound_data["settings"] = json.dumps(settings)
     if "streamSettings" in inbound_data and isinstance(inbound_data["streamSettings"], dict):
         inbound_data["streamSettings"] = json.dumps(inbound_data["streamSettings"])
     if "sniffing" in inbound_data and isinstance(inbound_data["sniffing"], dict):
         inbound_data["sniffing"] = json.dumps(inbound_data["sniffing"])
 
+    # Отправляем на документированный эндпоинт обновления инбаунда
     update_res = await api_request("POST", f"/panel/api/inbounds/update/{inbound_id}", inbound_data)
     if not update_res or not update_res.get("success"):
         return f"Ошибка сохранения в панели: {update_res.get('msg') if update_res else 'Unknown'}"
