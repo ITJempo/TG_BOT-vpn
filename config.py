@@ -7,6 +7,7 @@ load_dotenv()
 
 class Settings(BaseSettings):
     BOT_TOKEN: str
+    CRYPTO_PAY_TOKEN: str
     PANEL_URL: str
     INBOUND_ID: int
     API_TOKEN: str
@@ -14,12 +15,17 @@ class Settings(BaseSettings):
     SHORT_ID: str
     SNI_DOMAIN: str
     
+    # Добавляем эти поля, чтобы Pydantic не ругался на .env
+    xui_url: str = ""
+    xui_username: str = ""
+    xui_password: str = ""
+    
     ADMIN_USERNAME: str
     ADMIN_ID: int
     
     DB_PATH: str = "bot_database.db"
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
-    
+ 
     # Добавляем токен для CryptoBot в Pydantic-модель
     CRYPTO_PAY_TOKEN: str = os.getenv("CRYPTO_PAY_TOKEN", "")
 
