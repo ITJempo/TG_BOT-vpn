@@ -19,7 +19,7 @@ async def get_main_menu(user_id: int, has_subscription: bool) -> InlineKeyboardM
     keyboard = [
         [InlineKeyboardButton(text="🚀 Начать", callback_data=NavCallback(target="buy_sub").pack())],
         [
-            InlineKeyboardButton(text="🔑 Мои ключи", callback_data=NavCallback(target="my_sub").pack()),
+            InlineKeyboardButton(text="👤 Мой кабинет", callback_data=NavCallback(target="my_sub").pack()),
             InlineKeyboardButton(text="📖 Инструкция", callback_data=NavCallback(target="instructions").pack())
         ],
         [

@@ -1,9 +1,7 @@
-import os
 import time
 from datetime import datetime
 from aiogram import Router, F, types
 from aiogram.filters import CommandStart, CommandObject, Command
-from aiogram.types import FSInputFile, InputMediaPhoto
 
 from bot.config import config, TRIAL_DAYS, BASE_DEVICES, TRIAL_DEVICES
 from bot.database.db import db
@@ -13,50 +11,6 @@ from bot.services.vpn_panel import VPNPanelService
 from bot.utils.xui import add_extra_device
 
 router = Router()
-
-# --- Пути к баннерам ---
-BANNER_START = "bot/assets/start_banner.png"
-BANNER_GUIDE = "bot/assets/guide_banner.png"
-BANNER_SUPPORT = "bot/assets/support_banner.png"
-BANNER_REF = "bot/assets/referral_banner.png"
-BANNER_ANIMATION = "image (1) (1).gif"  # Путь к вашей GIF-анимации до старта
-
-
-# --- Вспомогательная функция безопасной смены баннера и текста ---
-async def safe_edit_message(callback: types.CallbackQuery, photo_path: str, caption: str, reply_markup=None):
-    """
-    Безопасно обновляет сообщение:
-    - Если у сообщения есть картинка -> меняет медиа и подпись через edit_media
-    - Если сообщение было только текстовым -> удаляет его и отправляет новое с баннером
-    """
-    try:
-        if callback.message.photo:
-            await callback.message.edit_media(
-                media=InputMediaPhoto(
-                    media=FSInputFile(photo_path),
-                    caption=caption,
-                    parse_mode="Markdown"
-                ),
-                reply_markup=reply_markup
-            )
-        else:
-            await callback.message.delete()
-            await callback.message.answer_photo(
-                photo=FSInputFile(photo_path),
-                caption=caption,
-                reply_markup=reply_markup,
-                parse_mode="Markdown"
-            )
-    except Exception:
-        try:
-            await callback.message.answer_photo(
-                photo=FSInputFile(photo_path),
-                caption=caption,
-                reply_markup=reply_markup,
-                parse_mode="Markdown"
-            )
-        except Exception:
-            pass
 
 
 # --- 1. КОМАНДА /start ---
@@ -97,15 +51,6 @@ async def cmd_start(message: types.Message, command: CommandObject):
     
     menu = await get_main_menu(user_id, has_sub)
     
-    # Сначала отправляем GIF-анимацию до старта (если файл существует)
-    if os.path.exists(BANNER_ANIMATION):
-        try:
-            await message.answer_animation(
-                animation=FSInputFile(BANNER_ANIMATION)
-            )
-        except Exception as e:
-            print(f"Не удалось отправить анимацию: {e}")
-
     welcome_text = (
         f"✨ **Приветствую, {message.from_user.first_name}!**\n\n"
         f"⚡ **Добро пожаловать в самый быстрый и стабильный VPN — JempoVPN!**\n\n"
@@ -119,36 +64,29 @@ async def cmd_start(message: types.Message, command: CommandObject):
         f"🎁 **{TRIAL_DAYS} дня бесплатной подписки — просто нажми «Начать»!**"
     )
 
-    await message.answer_photo(
-        photo=FSInputFile(BANNER_START),
-        caption=welcome_text,
+    await message.answer(
+        welcome_text,
         reply_markup=menu,
         parse_mode="Markdown"
     )
 
 
-# --- БЫСТРЫЕ КОМАНДЫ МЕНЮ ---
+# --- 1.1 КОМАНДА /menu — быстрый вызов главного меню ---
 @router.message(Command("menu"))
 async def cmd_menu(message: types.Message):
-    user_id = message.from_user.id
-    user = await db.get_user(user_id)
+    user = await db.get_user(message.from_user.id)
     expiry_time = user.get("expiry_time", 0) if user else 0
     has_sub = bool(expiry_time > int(time.time() * 1000)) if expiry_time > 0 else False
-    
-    menu = await get_main_menu(user_id, has_sub)
-    await message.answer_photo(
-        photo=FSInputFile(BANNER_START),
-        caption="⚡ **Главное меню JempoVPN**",
-        reply_markup=menu,
-        parse_mode="Markdown"
-    )
+    menu = await get_main_menu(message.from_user.id, has_sub)
+    await message.answer("⚡ **Главное меню JempoVPN**", reply_markup=menu, parse_mode="Markdown")
 
 
+# --- 1.2 КОМАНДА /help — инструкция по подключению ---
 @router.message(Command("help"))
 async def cmd_help(message: types.Message):
     text = (
         "📖 **ИНСТРУКЦИЯ ПО НАСТРОЙКЕ**\n\n"
-        "1️⃣ Скопируйте ваш ключ из **Моих ключей**.\n"
+        "1️⃣ Скопируйте ваш ключ из **Мой кабинет**.\n"
         "2️⃣ Установите подходящий клиент на устройство:\n\n"
         "🍏 **iOS / iPhone:** `v2box` или `Streisand`\n"
         "🤖 **Android:** `v2rayNG` или `Happ`\n"
@@ -157,38 +95,28 @@ async def cmd_help(message: types.Message):
         "3️⃣ Вставьте ключ из буфера обмена в приложение и нажмите **Подключить**."
     )
     keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
-        [types.InlineKeyboardButton(text="◀️ Главное меню", callback_data=NavCallback(target="home").pack())]
+        [types.InlineKeyboardButton(text="⚡ Главное меню", callback_data=NavCallback(target="home").pack())]
     ])
-    await message.answer_photo(
-        photo=FSInputFile(BANNER_GUIDE),
-        caption=text,
-        reply_markup=keyboard,
-        parse_mode="Markdown"
-    )
+    await message.answer(text, reply_markup=keyboard, parse_mode="Markdown")
 
 
+# --- 1.3 КОМАНДА /info — о сервисе ---
 @router.message(Command("info"))
 async def cmd_info(message: types.Message):
     text = (
-        "ℹ️ **О СЕРВИСЕ JempoVPN**\n\n"
-        "**JempoVPN** — это ваш персональный инструмент для безопасного, быстрого и свободного доступа в интернет на базе передового протокола **VLESS Reality**.\n\n"
-        "🌟 **Наши главные преимущества:**\n"
-        "• 🚀 **Максимальная скорость:** Никаких просадок соединения, комфортный просмотр 4K-видео, стримы и онлайн-игры без задержек и высокого пинга.\n"
-        "• 🔒 **Абсолютная приватность:** Строгая политика отсутствия логов (No-Logs) и надежное шифрование ваших данных.\n"
-        "• 🛡 **Обход блокировок:** Передовая технология маскировки трафика позволяет стабильно обходить ограничения в любых условиях.\n"
-        "• 📱 **Все устройства:** Полноценная поддержка смартфонов (iOS / Android), компьютеров (Windows / macOS) и телевизоров.\n"
-        "• ⚡ **Удобство управления:** Все ключи, продление подписки и добавление устройств происходят прямо здесь, в Telegram.\n\n"
-        "💬 Возникли вопросы? Наша команда поддержки всегда на связи!"
+        f"ℹ️ **О СЕРВИСЕ JempoVPN**\n\n"
+        f"— Работаем уже больше года\n"
+        f"— Высокая скорость соединения, современный протокол VLESS Reality\n"
+        f"— Полная приватность, без логов\n"
+        f"— Реферальная система 50%\n"
+        f"— Быстрая поддержка 24/7\n"
+        f"— Поддержка ПК, Телефонов и Телевизоров\n\n"
+        f"🎁 Новым пользователям — {TRIAL_DAYS} дня бесплатно."
     )
     keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
-        [types.InlineKeyboardButton(text="◀️ Главное меню", callback_data=NavCallback(target="home").pack())]
+        [types.InlineKeyboardButton(text="⚡ Главное меню", callback_data=NavCallback(target="home").pack())]
     ])
-    await message.answer_photo(
-        photo=FSInputFile(BANNER_START),
-        caption=text,
-        reply_markup=keyboard,
-        parse_mode="Markdown"
-    )
+    await message.answer(text, reply_markup=keyboard, parse_mode="Markdown")
 
 
 # --- 2. ВОЗВРАТ В ГЛАВНОЕ МЕНЮ ---
@@ -199,7 +127,7 @@ async def back_home_handler(callback: types.CallbackQuery):
     has_sub = bool(expiry_time > int(time.time() * 1000)) if expiry_time > 0 else False
     
     menu = await get_main_menu(callback.from_user.id, has_sub)
-    await safe_edit_message(callback, BANNER_START, "⚡ **Главное меню JempoVPN**", reply_markup=menu)
+    await callback.message.edit_text("⚡ **Главное меню JempoVPN**", reply_markup=menu, parse_mode="Markdown")
     await callback.answer()
 
 
@@ -212,6 +140,7 @@ async def my_sub_handler(callback: types.CallbackQuery):
     now_ms = int(time.time() * 1000)
     has_sub = expiry_ms > now_ms
 
+    # Получаем все ключи пользователя из панели 3X-UI по его Telegram ID
     from bot.utils.xxy import get_clients_by_tg_id 
     user_keys = await get_clients_by_tg_id(user_id)
     device_limit = await db.get_device_limit(user_id, default=BASE_DEVICES)
@@ -233,7 +162,7 @@ async def my_sub_handler(callback: types.CallbackQuery):
     from bot.keyboards.inline import get_my_sub_keyboard
     keyboard = get_my_sub_keyboard(has_sub, user_keys, device_limit)
 
-    await safe_edit_message(callback, BANNER_START, text, reply_markup=keyboard)
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
     await callback.answer()
 
 
@@ -242,6 +171,7 @@ async def my_sub_handler(callback: types.CallbackQuery):
 async def manage_single_key(callback: types.CallbackQuery):
     client_uuid = callback.data.replace("manage_key_", "")
     
+    # Ищем клиента в панели по UUID и генерируем для него VLESS строку
     from bot.utils.xxy import get_vless_link_by_uuid
     vless_link = await get_vless_link_by_uuid(client_uuid)
 
@@ -258,8 +188,7 @@ async def manage_single_key(callback: types.CallbackQuery):
         f"`{vless_link}`\n\n"
         f"💡 _Нажмите на ключ, чтобы скопировать его в буфер обмена._"
     )
-    
-    await safe_edit_message(callback, BANNER_START, text, reply_markup=keyboard)
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
     await callback.answer()
 
 
@@ -287,12 +216,14 @@ async def create_device_handler(callback: types.CallbackQuery):
         )
         return
 
-    remaining_days = max(1, -(-(expiry_ms - now_ms) // (24 * 60 * 60 * 1000)))
+    # Новое устройство должно жить ровно до конца текущей подписки
+    remaining_days = max(1, -(-(expiry_ms - now_ms) // (24 * 60 * 60 * 1000)))  # округление вверх
 
     new_config = await add_extra_device(user_id, days=remaining_days)
 
     if new_config and str(new_config).startswith("vless://"):
         await callback.answer("✅ Новое устройство успешно добавлено!", show_alert=True)
+        # Возвращаем в кабинет
         await my_sub_handler(callback)
     else:
         await callback.answer("⚠️ Ошибка панели, попробуйте позже.", show_alert=True)
@@ -314,7 +245,7 @@ async def delete_device_handler(callback: types.CallbackQuery):
     await my_sub_handler(callback)
 
 
-# --- 4. ПОКУПКА ПОДПИСКИ (buy_sub) ---
+# --- 4. "СТАРТУЕМ СЕЙЧАС!" — ТОЧКА ВХОДА В ПОКУПКУ ПОДПИСКИ (buy_sub) ---
 @router.callback_query(NavCallback.filter(F.target == "buy_sub"))
 async def buy_sub_handler(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -335,7 +266,7 @@ async def buy_sub_handler(callback: types.CallbackQuery):
         text = header + "Выберите тариф ниже, чтобы подключиться:"
         keyboard = get_plan_list_keyboard(mode="new", show_trial=not trial_used)
 
-    await safe_edit_message(callback, BANNER_START, text, reply_markup=keyboard)
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
     await callback.answer()
 
 
@@ -347,7 +278,7 @@ async def renew_current_handler(callback: types.CallbackQuery):
         f"Выберите новый тариф (будет установлен как текущий) или тот же самый. Дни суммируются."
     )
     keyboard = get_plan_list_keyboard(mode="renew")
-    await safe_edit_message(callback, BANNER_START, text, reply_markup=keyboard)
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
     await callback.answer()
 
 
@@ -355,7 +286,7 @@ async def renew_current_handler(callback: types.CallbackQuery):
 async def buy_new_handler(callback: types.CallbackQuery):
     text = "➕ **Новая подписка**\n\nВыберите тариф для нового ключа:"
     keyboard = get_plan_list_keyboard(mode="new")
-    await safe_edit_message(callback, BANNER_START, text, reply_markup=keyboard)
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
     await callback.answer()
 
 
@@ -369,12 +300,7 @@ async def claim_trial_handler(callback: types.CallbackQuery):
         await callback.answer("❌ Вы уже использовали бесплатный пробный период!", show_alert=True)
         return
 
-    # Безопасно обновляем подпись сообщения на статус загрузки
-    if callback.message.photo:
-        await callback.message.edit_caption(caption="⏳ Активируем ваш тестовый период...")
-    else:
-        await callback.message.edit_text("⏳ Активируем ваш тестовый период...")
-
+    await callback.message.edit_text("⏳ Активируем ваш тестовый период...")
     vpn_config = await VPNPanelService.generate_vpn_key(user_id, callback.from_user.username or "TrialUser", days=TRIAL_DAYS)
     
     if vpn_config and str(vpn_config).startswith("vless://"):
@@ -394,17 +320,18 @@ async def claim_trial_handler(callback: types.CallbackQuery):
             [types.InlineKeyboardButton(text="◀️ В меню", callback_data=NavCallback(target="home").pack())]
         ])
 
-        text = (
+        await callback.message.edit_text(
             f"✅ **Пробный доступ активирован**\n\n"
             f"⏳ Срок: {TRIAL_DAYS} дн.\n"
             f"📱 Устройств: {TRIAL_DEVICES}\n"
             f"🔗 Конфигурация:\n\n"
             f"`{vpn_config}`\n\n"
-            f"Откройте ссылку в приложении на вашем устройстве. Подсказки — в разделе «🧭 Инструкция»."
+            f"Откройте ссылку в приложении на вашем устройстве. Подсказки — в разделе «🧭 Инструкция».",
+            parse_mode="Markdown",
+            reply_markup=keyboard
         )
 
-        await safe_edit_message(callback, BANNER_START, text, reply_markup=keyboard)
-
+        # Небольшой апсейл сразу после активации триала, как у Kakadu
         try:
             hot_plan = None
             from bot.config import PRICING_PLANS
@@ -420,10 +347,7 @@ async def claim_trial_handler(callback: types.CallbackQuery):
         except Exception:
             pass
     else:
-        if callback.message.photo:
-            await callback.message.edit_caption(caption=f"❌ Ошибка генерации ключа: {vpn_config}")
-        else:
-            await callback.message.edit_text(f"❌ Ошибка генерации ключа: {vpn_config}")
+        await callback.message.edit_text(f"❌ Ошибка генерации ключа: {vpn_config}")
     
     await callback.answer()
 
@@ -444,8 +368,7 @@ async def instructions_handler(callback: types.CallbackQuery):
     keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
         [types.InlineKeyboardButton(text="◀️ Назад", callback_data=NavCallback(target="home").pack())]
     ])
-    
-    await safe_edit_message(callback, BANNER_GUIDE, text, reply_markup=keyboard)
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
     await callback.answer()
 
 
@@ -462,8 +385,7 @@ async def support_handler(callback: types.CallbackQuery):
         [types.InlineKeyboardButton(text="💬 Написать администратору", url=f"https://t.me/{admin_username}")],
         [types.InlineKeyboardButton(text="◀️ Назад", callback_data=NavCallback(target="home").pack())]
     ])
-    
-    await safe_edit_message(callback, BANNER_SUPPORT, text, reply_markup=keyboard)
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
     await callback.answer()
 
 
@@ -488,6 +410,5 @@ async def terms_handler(callback: types.CallbackQuery):
     keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
         [types.InlineKeyboardButton(text="◀️ Назад", callback_data=NavCallback(target="home").pack())]
     ])
-    
-    await safe_edit_message(callback, BANNER_START, text, reply_markup=keyboard)
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
     await callback.answer()

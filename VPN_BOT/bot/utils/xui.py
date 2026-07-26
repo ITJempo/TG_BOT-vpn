@@ -1,6 +1,7 @@
 import json
 import time
 import uuid
+import asyncio
 import logging
 import aiohttp
 from typing import Optional, Dict, Any
@@ -8,6 +9,114 @@ from typing import Optional, Dict, Any
 from bot.config import config
 
 logger = logging.getLogger(__name__)
+
+# ──────────────────────────────────────────────────────────────
+# Авторизация в 3X-UI.
+# Панель ожидает логин по username/password (POST /login) с сохранением
+# сессионной cookie — статичный Bearer-токен в большинстве версий панели
+# не работает (secret-token режим убрали в 3x-ui 2.6.0). Держим один
+# переиспользуемый aiohttp.ClientSession с cookie jar и логинимся лениво,
+# перелогиниваясь автоматически, если сессия протухла (401/403).
+# ──────────────────────────────────────────────────────────────
+_session: Optional[aiohttp.ClientSession] = None
+_login_lock = asyncio.Lock()
+_logged_in = False
+
+
+async def _get_http_session() -> aiohttp.ClientSession:
+    global _session
+    if _session is None or _session.closed:
+        connector = aiohttp.TCPConnector(ssl=False)
+        _session = aiohttp.ClientSession(connector=connector)
+    return _session
+
+
+async def _login(session: aiohttp.ClientSession) -> bool:
+    panel_url = getattr(config, 'PANEL_URL', '').rstrip('/')
+    username = getattr(config, 'xui_username', '')
+    password = getattr(config, 'xui_password', '')
+
+    if not username or not password:
+        logger.error("Не заданы xui_username/xui_password в конфиге — авторизация в панели 3X-UI невозможна.")
+        return False
+
+    try:
+        async with session.post(
+            f"{panel_url}/login",
+            json={"username": username, "password": password},
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+        ) as resp:
+            if resp.status != 200:
+                logger.error(f"Логин в 3X-UI не удался, HTTP статус {resp.status}")
+                return False
+            data = await resp.json()
+            ok = bool(data.get("success"))
+            if not ok:
+                logger.error(f"Логин в 3X-UI отклонён панелью: {data.get('msg')}")
+            return ok
+    except Exception as e:
+        logger.error(f"Исключение при логине в 3X-UI: {e}")
+        return False
+
+
+async def api_request(method: str, endpoint: str, data: Optional[Dict] = None) -> Dict[str, Any]:
+    global _logged_in
+    panel_url = getattr(config, 'PANEL_URL', 'http://89.125.188.43:2053').rstrip('/')
+    api_token = getattr(config, 'API_TOKEN', '')
+
+    session = await _get_http_session()
+
+    async with _login_lock:
+        if not _logged_in:
+            _logged_in = await _login(session)
+            if not _logged_in:
+                return {"success": False, "msg": "Не удалось авторизоваться в панели 3X-UI (проверь xui_username/xui_password и PANEL_URL)"}
+
+    url = f"{panel_url}{endpoint}"
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    # На случай, если в панели включён отдельный API-токен (Settings → Security → API Token) —
+    # шлём его тоже, cookie-сессии это не мешает.
+    if api_token:
+        headers["Authorization"] = f"Bearer {api_token}"
+
+    for attempt in range(2):  # 1 попытка + 1 повтор после релогина, если сессия протухла
+        try:
+            if method == "GET":
+                async with session.get(url, headers=headers) as resp:
+                    if resp.status == 200:
+                        return await resp.json()
+                    if resp.status in (401, 403) and attempt == 0:
+                        logger.warning("Сессия 3X-UI истекла, повторный логин...")
+                        _logged_in = await _login(session)
+                        continue
+                    logger.error(f"3X-UI ответила статусом {resp.status} на {method} {endpoint}")
+            elif method == "POST":
+                async with session.post(url, json=data, headers=headers) as resp:
+                    if resp.status == 200:
+                        return await resp.json()
+                    if resp.status in (401, 403) and attempt == 0:
+                        logger.warning("Сессия 3X-UI истекла, повторный логин...")
+                        _logged_in = await _login(session)
+                        continue
+                    logger.error(f"3X-UI ответила статусом {resp.status} на {method} {endpoint}")
+        except Exception as e:
+            logger.error(f"Panel API Exception [{method} {endpoint}]: {e}")
+            break
+
+    return {"success": False, "msg": "Network or Parse Error"}
+
+
+async def get_inbound_data() -> Optional[Dict[str, Any]]:
+    inbound_id = getattr(config, 'INBOUND_ID', 3)
+    res = await api_request("GET", f"/panel/api/inbounds/get/{inbound_id}")
+    if res and res.get("success"):
+        return res.get("obj", {})
+    return None
+
 
 async def add_extra_device(user_id: int, days: int = 30) -> str:
     """Генерирует НОВЫЙ ключ для дополнительного устройства пользователя."""
@@ -73,41 +182,6 @@ async def add_extra_device(user_id: int, days: int = 30) -> str:
 
     server_ip = panel_url.rstrip('/').split("//")[1].split(":")[0]
     return f"vless://{client_uuid}@{server_ip}:8443?encryption=none&flow=xtls-rprx-vision&fp=firefox&pbk={public_key}&security=reality&sid={actual_sid}&sni={sni_domain}&spx={actual_spx}&type=tcp#JempoVPN-Device-{unique_suffix}"
-
-async def api_request(method: str, endpoint: str, data: Optional[Dict] = None) -> Dict[str, Any]:
-    connector = aiohttp.TCPConnector(ssl=False)
-    async with aiohttp.ClientSession(connector=connector) as session:
-        panel_url = getattr(config, 'PANEL_URL', 'http://89.125.188.43:2053').rstrip('/')
-        api_token = getattr(config, 'API_TOKEN', '')
-        
-        url = f"{panel_url}{endpoint}"
-        headers = {
-            "User-Agent": "Mozilla/5.0",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "Authorization": f"Bearer {api_token}"
-        }
-        try:
-            if method == "GET":
-                async with session.get(url, headers=headers) as resp:
-                    if resp.status == 200:
-                        return await resp.json()
-            elif method == "POST":
-                async with session.post(url, json=data, headers=headers) as resp:
-                    if resp.status == 200:
-                        return await resp.json()
-        except Exception as e:
-            logger.error(f"Panel API Exception [{method} {endpoint}]: {e}")
-            
-        return {"success": False, "msg": "Network or Parse Error"}
-
-
-async def get_inbound_data() -> Optional[Dict[str, Any]]:
-    inbound_id = getattr(config, 'INBOUND_ID', 3)
-    res = await api_request("GET", f"/panel/api/inbounds/get/{inbound_id}")
-    if res and res.get("success"):
-        return res.get("obj", {})
-    return None
 
 
 async def get_unique_users_count() -> int:

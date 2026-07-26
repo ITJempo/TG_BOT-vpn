@@ -19,6 +19,8 @@ class Database:
                     referrer_id INTEGER DEFAULT NULL,
                     trial_used INTEGER DEFAULT 0,
                     device_limit INTEGER DEFAULT 1,
+                    reminder_3d_sent INTEGER DEFAULT 0,
+                    reminder_24h_sent INTEGER DEFAULT 0,
                     created_at INTEGER
                 )
             """)
@@ -39,6 +41,12 @@ class Database:
                 await db.execute("ALTER TABLE users ADD COLUMN device_limit INTEGER DEFAULT 1")
             except Exception:
                 pass  # колонка уже существует — это ожидаемо и не является ошибкой
+
+            for col in ("reminder_3d_sent", "reminder_24h_sent"):
+                try:
+                    await db.execute(f"ALTER TABLE users ADD COLUMN {col} INTEGER DEFAULT 0")
+                except Exception:
+                    pass  # колонка уже существует
 
             await db.commit()
             logging.info("База данных инициализирована.")
@@ -71,9 +79,15 @@ class Database:
             else:
                 trial_val = trial_used if trial_used is not None else user["trial_used"]
                 device_limit_val = device_limit if device_limit is not None else user.get("device_limit", 1)
+                # Если подписка продлена (новая дата дальше старой) — сбрасываем флаги
+                # напоминаний, чтобы за новый период пользователь получил уведомления снова.
+                reset_reminders = expiry_time > user.get("expiry_time", 0)
+                reminder_3d = 0 if reset_reminders else user.get("reminder_3d_sent", 0)
+                reminder_24h = 0 if reset_reminders else user.get("reminder_24h_sent", 0)
                 await db.execute(
-                    "UPDATE users SET username = ?, email = ?, expiry_time = ?, trial_used = ?, device_limit = ? WHERE user_id = ?",
-                    (username, email, expiry_time, trial_val, device_limit_val, user_id)
+                    "UPDATE users SET username = ?, email = ?, expiry_time = ?, trial_used = ?, device_limit = ?, "
+                    "reminder_3d_sent = ?, reminder_24h_sent = ? WHERE user_id = ?",
+                    (username, email, expiry_time, trial_val, device_limit_val, reminder_3d, reminder_24h, user_id)
                 )
             await db.commit()
 
@@ -103,7 +117,8 @@ class Database:
                 return res[0] if res else 0
 
     async def get_expiring_users(self) -> List[Dict[str, Any]]:
-        """Возвращает пользователей, у которых подписка кончается в течение следующих 24 часов"""
+        """Возвращает пользователей, у которых подписка кончается в течение следующих 24 часов
+        (оставлено для обратной совместимости; новый код использует get_users_expiring_between)."""
         now_ms = int(time.time() * 1000)
         day_later_ms = now_ms + (24 * 3600 * 1000)
         async with aiosqlite.connect(self.db_path) as db:
@@ -114,5 +129,26 @@ class Database:
             ) as cursor:
                 rows = await cursor.fetchall()
                 return [dict(r) for r in rows]
+
+    async def get_users_expiring_between(self, min_ms: int, max_ms: int, flag_column: str) -> List[Dict[str, Any]]:
+        """Пользователи, чья подписка истекает в окне (min_ms, max_ms], которым ещё не
+        отправляли конкретное напоминание (flag_column = 'reminder_3d_sent' или 'reminder_24h_sent')."""
+        if flag_column not in ("reminder_3d_sent", "reminder_24h_sent"):
+            raise ValueError("Недопустимое имя колонки для напоминания")
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                f"SELECT * FROM users WHERE expiry_time > ? AND expiry_time <= ? AND {flag_column} = 0",
+                (min_ms, max_ms)
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(r) for r in rows]
+
+    async def mark_reminder_sent(self, user_id: int, flag_column: str):
+        if flag_column not in ("reminder_3d_sent", "reminder_24h_sent"):
+            raise ValueError("Недопустимое имя колонки для напоминания")
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(f"UPDATE users SET {flag_column} = 1 WHERE user_id = ?", (user_id,))
+            await db.commit()
 
 db = Database(config.DB_PATH)
