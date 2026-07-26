@@ -200,9 +200,9 @@ async def process_payment_method(callback: types.CallbackQuery, callback_data: P
         await callback.answer()
         return
 
-    # 2. Оплата криптовалютой (USDT через CryptoBot) через Mini App
+    # 2. Оплата криптовалютой (USDT через CryptoBot)
     if callback_data.method == "crypto":
-        price_usdt = round(total_stars * 0.02, 2)  # Примерный курс: 1 звезда ≈ 0.02 USDT
+        price_usdt = round(total_stars * 0.02, 2)
         payload = f"vpn|{callback_data.mode}|{callback_data.plan_key}|{callback_data.count}|{promo_code}|crypto"
 
         try:
@@ -214,9 +214,11 @@ async def process_payment_method(callback: types.CallbackQuery, callback_data: P
                 expires_in=1800
             )
 
-            # Используем WebApp вместо обычной внешней ссылки, чтобы избежать системной блокировки Telegram
+            # Используем прямой WebApp URL с корректной структурой mini_app_invoice_url
+            web_app_url = getattr(invoice, 'mini_app_invoice_url', invoice.bot_invoice_url)
+
             keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
-                [types.InlineKeyboardButton(text="💳 Оплатить картой / USDT", web_app=WebAppInfo(url=invoice.mini_app_invoice_url))],
+                [types.InlineKeyboardButton(text="💳 Оплатить картой / USDT", web_app=WebAppInfo(url=web_app_url))],
                 [types.InlineKeyboardButton(text="🔄 Проверить оплату", callback_data=f"check_crypto_{invoice.invoice_id}")]
             ])
 
