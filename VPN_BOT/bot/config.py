@@ -3,6 +3,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from dotenv import load_dotenv
 class Settings(BaseSettings):
     BOT_TOKEN: str
+    CRYPTO_PAY_TOKEN: str
     PANEL_URL: str
     INBOUND_ID: int
     API_TOKEN: str
@@ -10,13 +11,18 @@ class Settings(BaseSettings):
     SHORT_ID: str
     SNI_DOMAIN: str
     
+    # Добавляем логин и пароль прямо сюда:
+    xui_url: str = "http://89.125.188.43:2053"
+    xui_username: str = "IT_Jempo"
+    xui_password: str = "67102008Dm"
+    
     ADMIN_USERNAME: str
     ADMIN_ID: int
     
     DB_PATH: str = "bot_database.db"
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 config = Settings()
 
