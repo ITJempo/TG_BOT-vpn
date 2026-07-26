@@ -19,22 +19,16 @@ from bot.services.vpn_panel import VPNPanelService
 from bot.utils.xui import add_extra_device
 from bot.database.db import db
 
-# Инициализация Crypto Pay с использованием токена из Pydantic-конфига
+# Инициализация Crypto Pay
 crypto = AioCryptoPay(token=config.CRYPTO_PAY_TOKEN, network=Networks.TEST_NET)
 
 router = Router()
 
-# ──────────────────────────────────────────────────────────────
-# Путь к баннеру
-# ──────────────────────────────────────────────────────────────
 BANNER_START = "bot/assets/start_banner.png"
 
-# ──────────────────────────────────────────────────────────────
-# Хранилища в памяти процесса
-# ──────────────────────────────────────────────────────────────
-USER_PROMO: dict[int, str] = {}          # user_id -> применённый промокод
-GIFT_CODES: dict[str, dict] = {}         # gift_code -> {"days": int, "count": int}
-USED_FREE_PROMOS: dict[int, set] = {}    # user_id -> set(кодов free_days)
+USER_PROMO: dict[int, str] = {}          
+GIFT_CODES: dict[str, dict] = {}         
+USED_FREE_PROMOS: dict[int, set] = {}    
 
 
 class PromoStates(StatesGroup):
@@ -54,7 +48,7 @@ def _apply_promo(user_id: int, total: int) -> int:
         total = max(1, total - PROMO_CODES[code]["discount_stars"])
     return total
 
-# --- Безопасное обновление сообщений с поддержкой картинок ---
+
 async def safe_edit_message(callback: types.CallbackQuery, photo_path: str, caption: str, reply_markup=None):
     try:
         if callback.message.photo:
@@ -86,9 +80,6 @@ async def safe_edit_message(callback: types.CallbackQuery, photo_path: str, capt
             pass
 
 
-# ──────────────────────────────────────────────────────────────
-# ВЫБОР ТАРИФА -> ЭКРАН ВЫБОРА КОЛИЧЕСТВА УСТРОЙСТВ
-# ──────────────────────────────────────────────────────────────
 @router.callback_query(PayPlanCallback.filter())
 async def process_pick_plan(callback: types.CallbackQuery, callback_data: PayPlanCallback):
     plan = PRICING_PLANS.get(callback_data.plan_key)
@@ -144,9 +135,6 @@ async def process_back_to_plans(callback: types.CallbackQuery, callback_data: Ba
     await callback.answer()
 
 
-# ──────────────────────────────────────────────────────────────
-# ПОДТВЕРЖДЕНИЕ КОЛИЧЕСТВА УСТРОЙСТВ -> ВЫБОР СПОСОБА ОПЛАТЫ
-# ──────────────────────────────────────────────────────────────
 @router.callback_query(ConfirmDevicesCallback.filter())
 async def process_confirm_devices(callback: types.CallbackQuery, callback_data: ConfirmDevicesCallback):
     plan = PRICING_PLANS.get(callback_data.plan_key)
@@ -184,7 +172,7 @@ async def process_payment_method(callback: types.CallbackQuery, callback_data: P
     total_stars = _apply_promo(callback.from_user.id, total_stars)
     promo_code = USER_PROMO.get(callback.from_user.id, "none")
 
-    # 1. Оплата звёздами ⭐ (Telegram Stars)
+    # 1. Оплата звёздами ⭐
     if callback_data.method == "stars":
         payload = f"vpn|{callback_data.mode}|{callback_data.plan_key}|{callback_data.count}|{promo_code}|stars"
         prices = [types.LabeledPrice(label=f"{plan['title']} x{callback_data.count}", amount=total_stars)]
@@ -200,7 +188,7 @@ async def process_payment_method(callback: types.CallbackQuery, callback_data: P
         await callback.answer()
         return
 
-    # 2. Оплата криптовалютой (USDT через CryptoBot)
+    # 2. Оплата криптовалютой через Telegram Mini App (Web App)
     if callback_data.method == "crypto":
         price_usdt = round(total_stars * 0.02, 2)
         payload = f"vpn|{callback_data.mode}|{callback_data.plan_key}|{callback_data.count}|{promo_code}|crypto"
@@ -214,20 +202,23 @@ async def process_payment_method(callback: types.CallbackQuery, callback_data: P
                 expires_in=1800
             )
 
-            # Используем прямой WebApp URL с корректной структурой mini_app_invoice_url
-            web_app_url = getattr(invoice, 'mini_app_invoice_url', invoice.bot_invoice_url)
+            # Берем ссылку на Mini App, чтобы открыть интерфейс оплаты внутри Telegram без предупреждений
+            webapp_url = getattr(invoice, 'mini_app_invoice_url', invoice.bot_invoice_url)
 
             keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
-                [types.InlineKeyboardButton(text="💳 Оплатить картой / USDT", web_app=WebAppInfo(url=web_app_url))],
+                [types.InlineKeyboardButton(
+                    text="💳 Открыть Mini App оплаты", 
+                    web_app=WebAppInfo(url=webapp_url)
+                )],
                 [types.InlineKeyboardButton(text="🔄 Проверить оплату", callback_data=f"check_crypto_{invoice.invoice_id}")]
             ])
 
             await safe_edit_message(
                 callback, 
                 BANNER_START, 
-                f"🪙 **Оплата криптовалютой / картой**\n\n"
+                f"🪙 **Оплата криптовалютой через Mini App**\n\n"
                 f"Сумма к оплате: **{price_usdt} USDT**\n\n"
-                f"Нажмите кнопку ниже для безопасной оплаты. Вы можете использовать обычные банковские карты — сервис автоматически конвертирует их в USDT.",
+                f"Нажмите кнопку ниже, чтобы открыть безопасное окно оплаты прямо в Telegram.",
                 reply_markup=keyboard
             )
         except Exception as e:
@@ -237,9 +228,6 @@ async def process_payment_method(callback: types.CallbackQuery, callback_data: P
         return
 
 
-# ──────────────────────────────────────────────────────────────
-# ПРОВЕРКА ОПЛАТЫ КРИПТОГРАФИЧЕСКОГО СЧЕТА (CRYPTOBOT)
-# ──────────────────────────────────────────────────────────────
 @router.callback_query(F.data.startswith("check_crypto_"))
 async def process_check_crypto_payment(callback: types.CallbackQuery):
     invoice_id = int(callback.data.split("_")[2])
@@ -265,7 +253,6 @@ async def process_check_crypto_payment(callback: types.CallbackQuery):
             days = plan["days"]
             count = int(count_str)
 
-            # Логируем платеж в БД
             await db.add_payment(
                 user_id=user_id,
                 amount=inv.amount,
@@ -293,7 +280,6 @@ async def process_check_crypto_payment(callback: types.CallbackQuery):
 
             vpn_config = await VPNPanelService.generate_vpn_key(user_id, username, days=days)
 
-            # Реферальный бонус
             user = await db.get_user(user_id)
             if user and user.get("referrer_id"):
                 ref_id = user["referrer_id"]
@@ -321,9 +307,6 @@ async def process_check_crypto_payment(callback: types.CallbackQuery):
         await callback.answer(f"❌ Ошибка проверки: {e}", show_alert=True)
 
 
-# ──────────────────────────────────────────────────────────────
-# ПРОМОКОД
-# ──────────────────────────────────────────────────────────────
 @router.callback_query(NavCallback.filter(F.target == "promo_flow"))
 async def promo_flow_start(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(PromoStates.waiting_for_code)
@@ -393,9 +376,6 @@ async def promo_flow_apply(message: types.Message, state: FSMContext):
     )
 
 
-# ──────────────────────────────────────────────────────────────
-# ПОДАРОК
-# ──────────────────────────────────────────────────────────────
 @router.callback_query(NavCallback.filter(F.target == "gift_flow"))
 async def gift_flow_start(callback: types.CallbackQuery):
     text = "🎁 **Купить в подарок**\n\nВыберите тариф — после оплаты вы получите ссылку, которую можно переслать другу."
@@ -439,9 +419,6 @@ async def redeem_gift_code(code: str, user_id: int, username: str) -> str:
     )
 
 
-# ──────────────────────────────────────────────────────────────
-# ДОКУПИТЬ ОДНО УСТРОЙСТВО СВЕРХ ЛИМИТА
-# ──────────────────────────────────────────────────────────────
 @router.callback_query(F.data == "buy_extra_device")
 async def buy_extra_device_handler(callback: types.CallbackQuery):
     user_id = callback.from_user.id
